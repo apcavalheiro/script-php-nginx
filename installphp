@@ -1,0 +1,90 @@
+#!/bin/bash
+
+#Variaveis para Php
+phpLibDir="/var/lib/php/glpi-php-fpm/"
+phpConfDir="/etc/php-fpm.d/"
+nginxFileConfd="/etc/nginx/conf.d"
+
+#------------- Nginx -------------#
+
+#Install epel-releases
+sudo yum install epel-release -y
+sudo yum install nginx php-fpm php-common -y
+
+#Criando arquivo $nginxFileConfd/glpi.conf
+sudo tee -a $nginxFileConfd/glpi.conf > /dev/null <<'EOF'
+server {
+    server_name ~$;
+    access_log  /var/log/nginx/access_glpi.log main;
+    error_log /var/log/nginx/error_glpi.log error;
+    root /usr/share/glpi;
+
+   location /glpi {
+        alias /usr/share/glpi/;
+        index   index.php;
+
+   location ~ /(conf|app|include|local)/ {
+        deny all;
+   }
+
+   location ~ \.php$ {
+        try_files $uri =404;
+        fastcgi_pass unix:/var/run/php-glpi.socket;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $request_filename;
+        include fastcgi_params;
+        fastcgi_buffers 8 16k;
+        fastcgi_buffer_size 32k;
+   ## Para o  glpi
+        fastcgi_param PHP_VALUE "
+        max_execution_time = 300
+                memory_limit = 128M
+                post_max_size = 16M
+                upload_max_filesize = 2M
+                max_input_time = 300
+                date.timezone = America/Sao_Paulo
+                always_populate_raw_post_data = -1
+        ";
+
+   }
+   }
+}
+EOF
+
+#Criando o arquivo no $phpLibDir/glpi.conf
+sudo tee -a $phpConfDir/glpi.conf > /dev/null <<'EOF'
+[glpi]
+listen = /var/run/php-glpi.socket
+listen.owner = nginx
+listen.group = nginx
+listen.mode = 0666
+user = nginx
+group = nginx
+pm = dynamic
+pm.max_children = 50
+pm.start_servers = 5
+pm.min_spare_servers = 5
+pm.max_spare_servers = 35
+slowlog = /var/log/php-fpm/glpi-slow.log
+catch_workers_output = yes
+security.limit_extensions = .php .php3 .php4 .php5
+php_admin_value[error_log] = /var/log/php-fpm/glpi-error.log
+php_admin_flag[log_errors] = on
+php_value[session.save_handler] = files
+php_value[session.save_path] = /var/lib/php/glpi-php-fpm/
+EOF
+
+#PHP-FPM
+sudo mkdir $phpLibDir
+sudo chmod 770 $phpLibDir
+sudo chown root:nginx $phpLibDir
+sudo chown nginx:nginx $zbxWebFile
+
+#iniciando e habilitando
+sudo systemctl enable nginx
+sudo systemctl enable php-fpm  
+
+#------------ glpi Front -------#
+
+sudo systemctl restart php-fpm
+sudo systemctl restart nginx
